@@ -31,6 +31,9 @@
   video{width:100%;max-width:320px;border-radius:8px;background:#000;display:block;margin:8px auto}
   textarea{width:100%;min-height:64px;background:#0d1117;color:var(--dim);border:1px solid var(--line);
     border-radius:8px;font-family:var(--mono);font-size:.7rem;padding:8px;resize:vertical}
+  .txt{width:100%;background:#0d1117;color:var(--ink);border:1px solid var(--line);border-radius:8px;
+    padding:11px;font-size:1rem;margin:4px 0 2px}
+  .lbl{font-size:.8rem;color:var(--dim)}
   .status{font-family:var(--mono);font-size:.8rem;padding:8px 10px;border:1px dashed var(--line);
     border-radius:8px;color:var(--warn)}
   .status.ok{color:var(--accent);border-style:solid}
@@ -39,10 +42,19 @@
   [hidden]{display:none!important}
   .hint{color:var(--dim);font-size:.78rem;margin:6px 0 0}
 
-  /* ---- Spielbrett ---- */
-  .turn{display:flex;align-items:center;gap:10px;font-weight:600;margin-bottom:10px}
-  .chip{width:18px;height:18px;border-radius:50%;flex:0 0 auto;box-shadow:inset 0 0 0 2px rgba(0,0,0,.25)}
+  /* ---- Punktestand ---- */
+  .scoreboard{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+  .score{display:flex;align-items:center;gap:7px;padding:6px 10px;border:1px solid var(--line);
+    border-radius:10px;font-weight:600;min-width:0}
+  .score .sname{max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .score .spts{font-family:var(--mono);font-size:1.05rem;min-width:1.2em;text-align:center}
+  .score.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .roundlbl{font-size:.76rem;color:var(--dim);text-align:center;flex:0 0 auto}
+  .chip{width:16px;height:16px;border-radius:50%;flex:0 0 auto;box-shadow:inset 0 0 0 2px rgba(0,0,0,.25)}
   .chip.red{background:var(--red)} .chip.yellow{background:var(--yellow)}
+
+  /* ---- Spielbrett ---- */
+  .turn{font-weight:600;margin-bottom:10px;min-height:1.5em}
   .board{display:grid;grid-template-columns:repeat(7,1fr);gap:2.5%;background:var(--board);
     padding:3%;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
   .cell{position:relative;aspect-ratio:1/1;background:var(--hole);border-radius:50%;
@@ -56,6 +68,7 @@
   .board.locked .cell{cursor:default}
   @media(hover:hover){.board:not(.locked) .col-hot{background:#13335f}}
   .result{text-align:center;font-size:1.1rem;font-weight:700;margin:12px 0 4px;min-height:1.2em}
+  .btnRow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 </style>
 </head>
 <body>
@@ -63,10 +76,12 @@
   <h1>Vier Gewinnt · Peer-to-Peer</h1>
   <p class="sub">Verbindung per QR ohne Server. Beide Geräte im selben WLAN/Hotspot.</p>
 
-  <!-- Rollenwahl -->
+  <!-- Rollenwahl + Name -->
   <div id="roleScreen" class="card">
-    <p class="step">Schritt 0 · Rolle wählen</p>
-    <p class="hint">Host = Spieler 1 (Rot, beginnt). Gast = Spieler 2 (Gelb).</p>
+    <p class="step">Schritt 0 · Name &amp; Rolle</p>
+    <label class="lbl" for="nameIn">Dein Name</label>
+    <input id="nameIn" class="txt" maxlength="16" placeholder="z. B. Mario" autocomplete="off">
+    <p class="hint">Host = Spieler 1 (Rot). Gast = Spieler 2 (Gelb). Der Startspieler wechselt jede Runde.</p>
     <div class="roleBtns">
       <button onclick="show('host')">Host · Rot</button>
       <button class="alt" onclick="show('guest')">Gast · Gelb</button>
@@ -122,13 +137,18 @@
 
   <!-- Spiel -->
   <div id="gameWrap" class="card" hidden>
-    <div class="turn">
-      <span id="youChip" class="chip"></span>
-      <span id="turnText"></span>
+    <div class="scoreboard">
+      <div class="score" id="scoreRed"><span class="chip red"></span><span class="sname" id="nameRed">Rot</span><span class="spts" id="ptsRed">0</span></div>
+      <div class="roundlbl" id="roundLbl">Runde 1</div>
+      <div class="score" id="scoreYellow"><span class="spts" id="ptsYellow">0</span><span class="sname" id="nameYellow">Gelb</span><span class="chip yellow"></span></div>
     </div>
+    <div class="turn"><span id="turnText"></span></div>
     <div id="board" class="board"></div>
     <div id="result" class="result"></div>
-    <button id="newGameBtn" onclick="newGame()">Neues Spiel</button>
+    <div class="btnRow">
+      <button id="newRoundBtn" onclick="newRound()">Neue Runde</button>
+      <button class="alt" id="resetScoreBtn" onclick="resetScore()">Punktestand 0:0</button>
+    </div>
   </div>
 </div>
 
@@ -12534,13 +12554,14 @@ var qrcode = function() {
 </script>
 <script>
 "use strict";
-const RTC_CONFIG = { iceServers: [] };       // nur lokale Kandidaten, offline-tauglich
+const RTC_CONFIG = { iceServers: [] };
 let pc=null, dc=null, scanStream=null;
-let role=null, myPlayer=0;                    // 1 = Host/Rot, 2 = Gast/Gelb
+let role=null, myPlayer=0, myName='', oppName='';
 
 // ===== UI-Helfer =====
 function show(r){
-  role=r; myPlayer = (r==='host') ? 1 : 2;
+  role=r; myPlayer=(r==='host')?1:2;
+  myName=(document.getElementById('nameIn').value||'').trim().slice(0,16) || (myPlayer===1?'Rot':'Gelb');
   document.getElementById('roleScreen').hidden=true;
   document.getElementById(r).hidden=false;
   document.getElementById('statusWrap').hidden=false;
@@ -12593,11 +12614,12 @@ function stopScan(){if(scanStream){scanStream.getTracks().forEach(t=>t.stop());s
 // ===== Verbindung =====
 function wireChannel(ch){
   dc=ch;
-  dc.onopen=()=>{ setStatus('verbunden ✓',true); startGameUI(); };
+  dc.onopen=()=>{ setStatus('verbunden ✓',true); startGameUI(); sendHello(); };
   dc.onclose=()=>{ setStatus('Verbindung geschlossen'); lockBoard(true); };
   dc.onmessage=(e)=>{ let m; try{m=JSON.parse(e.data);}catch{return;} handleRemote(m); };
 }
 function trackConn(){pc.onconnectionstatechange=()=>{if(!dc||dc.readyState!=='open')setStatus('Status: '+pc.connectionState);};}
+function sendHello(){ if(dc&&dc.readyState==='open') dc.send(JSON.stringify({type:'hello',name:myName})); }
 
 async function hostStart(){
   pc=new RTCPeerConnection(RTC_CONFIG);trackConn();
@@ -12631,43 +12653,45 @@ async function guestApply(code){
 // ============================================================
 const ROWS=6, COLS=7;
 let board=[], current=1, gameOver=false;
+let scores={1:0,2:0}, draws=0, round=1;
+
+function nameOf(p){ return (p===myPlayer) ? myName : (oppName||'Gegner'); }
 
 function startGameUI(){
-  // Signaling-Karten ausblenden, Brett zeigen
   ['host','guest'].forEach(id=>document.getElementById(id).hidden=true);
   document.getElementById('gameWrap').hidden=false;
-  const chip=document.getElementById('youChip');
-  chip.className='chip '+(myPlayer===1?'red':'yellow');
   buildBoardDOM();
-  resetState();
+  scores={1:0,2:0}; draws=0; round=1;
+  refreshNames();
+  resetBoard();
 }
 
 function buildBoardDOM(){
   const b=document.getElementById('board');b.innerHTML='';
-  for(let r=0;r<ROWS;r++){
-    for(let c=0;c<COLS;c++){
-      const cell=document.createElement('div');
-      cell.className='cell';cell.dataset.r=r;cell.dataset.c=c;
-      cell.onclick=()=>onColumnClick(c);
-      // Spalten-Hover-Hervorhebung (Desktop)
-      cell.onmouseenter=()=>highlightCol(c,true);
-      cell.onmouseleave=()=>highlightCol(c,false);
-      const disc=document.createElement('div');disc.className='disc';
-      cell.appendChild(disc);b.appendChild(cell);
-    }
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    const cell=document.createElement('div');
+    cell.className='cell';cell.dataset.r=r;cell.dataset.c=c;
+    cell.onclick=()=>onColumnClick(c);
+    cell.onmouseenter=()=>highlightCol(c,true);
+    cell.onmouseleave=()=>highlightCol(c,false);
+    const disc=document.createElement('div');disc.className='disc';
+    cell.appendChild(disc);b.appendChild(cell);
   }
 }
 function cellAt(r,c){return document.querySelector('.cell[data-r="'+r+'"][data-c="'+c+'"]');}
-function highlightCol(c,on){
-  if(gameOver)return;
-  for(let r=0;r<ROWS;r++)cellAt(r,c).classList.toggle('col-hot',on);
+function highlightCol(c,on){ if(gameOver)return; for(let r=0;r<ROWS;r++)cellAt(r,c).classList.toggle('col-hot',on); }
+
+function refreshNames(){
+  document.getElementById('nameRed').textContent=nameOf(1);
+  document.getElementById('nameYellow').textContent=nameOf(2);
 }
 
-function resetState(){
+function resetBoard(){
   board=Array.from({length:ROWS},()=>Array(COLS).fill(0));
-  current=1;gameOver=false;
+  current = ((round-1)%2===0) ? 1 : 2;     // Startspieler wechselt pro Runde
+  gameOver=false;
   document.getElementById('result').textContent='';
-  render();updateTurn();lockBoard(false);
+  render(); updateScoreboard(); updateTurn(); lockBoard(false);
 }
 function render(){
   for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
@@ -12677,44 +12701,52 @@ function render(){
   }
 }
 function updateTurn(){
-  const txt=document.getElementById('turnText');
-  if(gameOver)return;
-  txt.textContent = (current===myPlayer) ? 'Du bist am Zug' : 'Gegner ist am Zug';
+  const txt=document.getElementById('turnText'); if(gameOver)return;
+  txt.textContent = (current===myPlayer) ? 'Du bist am Zug' : (nameOf(current)+' ist am Zug');
+}
+function updateScoreboard(){
+  document.getElementById('ptsRed').textContent=scores[1];
+  document.getElementById('ptsYellow').textContent=scores[2];
+  document.getElementById('roundLbl').textContent='Runde '+round+(draws>0?' · Remis '+draws:'');
+  document.getElementById('scoreRed').classList.toggle('active',!gameOver&&current===1);
+  document.getElementById('scoreYellow').classList.toggle('active',!gameOver&&current===2);
 }
 function lockBoard(locked){document.getElementById('board').classList.toggle('locked',locked||gameOver||current!==myPlayer);}
 
 function lowestEmpty(c){for(let r=ROWS-1;r>=0;r--)if(board[r][c]===0)return r;return -1;}
 
 function onColumnClick(c){
-  if(gameOver||current!==myPlayer)return;     // nicht mein Zug
-  if(lowestEmpty(c)<0)return;                  // Spalte voll
+  if(gameOver||current!==myPlayer)return;
+  if(lowestEmpty(c)<0)return;
   applyMove(c);
   if(dc&&dc.readyState==='open')dc.send(JSON.stringify({type:'move',col:c}));
 }
 function handleRemote(m){
   if(m.type==='move')applyMove(m.col);
-  else if(m.type==='reset')resetState();
+  else if(m.type==='reset')newRound(false);
+  else if(m.type==='resetScore')resetScore(false);
+  else if(m.type==='hello'){oppName=((m.name||'').slice(0,16))||'Gegner';refreshNames();updateTurn();}
 }
 
 function applyMove(c){
   if(gameOver)return;
   const r=lowestEmpty(c);if(r<0)return;
   board[r][c]=current;
-  const disc=cellAt(r,c).querySelector('.disc');
-  disc.className='disc '+(current===1?'red':'yellow')+' drop';
+  cellAt(r,c).querySelector('.disc').className='disc '+(current===1?'red':'yellow')+' drop';
   const win=findWin(current);
   if(win){
-    gameOver=true;win.forEach(([wr,wc])=>cellAt(wr,wc).classList.add('win'));
-    const youWon = current===myPlayer;
-    document.getElementById('result').textContent = youWon ? 'Du gewinnst! 🎉' : 'Gegner gewinnt.';
-    document.getElementById('turnText').textContent='Spiel beendet';
+    gameOver=true; win.forEach(([wr,wc])=>cellAt(wr,wc).classList.add('win'));
+    scores[current]++;
+    document.getElementById('result').textContent = (current===myPlayer) ? 'Du gewinnst! 🎉' : (nameOf(current)+' gewinnt.');
+    document.getElementById('turnText').textContent='Runde beendet';
   }else if(board.every(row=>row.every(v=>v!==0))){
-    gameOver=true;document.getElementById('result').textContent='Unentschieden.';
-    document.getElementById('turnText').textContent='Spiel beendet';
+    gameOver=true; draws++;
+    document.getElementById('result').textContent='Unentschieden.';
+    document.getElementById('turnText').textContent='Runde beendet';
   }else{
-    current = 3-current;updateTurn();
+    current=3-current; updateTurn();
   }
-  lockBoard(false);
+  updateScoreboard(); lockBoard(false);
 }
 
 function findWin(p){
@@ -12722,8 +12754,7 @@ function findWin(p){
   for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
     if(board[r][c]!==p)continue;
     for(const [dr,dc] of dirs){
-      const line=[[r,c]];
-      let rr=r+dr,cc=c+dc;
+      const line=[[r,c]];let rr=r+dr,cc=c+dc;
       while(rr>=0&&rr<ROWS&&cc>=0&&cc<COLS&&board[rr][cc]===p){line.push([rr,cc]);rr+=dr;cc+=dc;}
       if(line.length>=4)return line.slice(0,4);
     }
@@ -12731,9 +12762,15 @@ function findWin(p){
   return null;
 }
 
-function newGame(){
-  resetState();
-  if(dc&&dc.readyState==='open')dc.send(JSON.stringify({type:'reset'}));
+// Neue Runde: Punktestand bleibt, Startspieler wechselt. Beide Seiten zählen round symmetrisch hoch.
+function newRound(local){
+  round++; resetBoard();
+  if(local!==false && dc&&dc.readyState==='open')dc.send(JSON.stringify({type:'reset'}));
+}
+// Punktestand auf 0:0 und zurück zu Runde 1.
+function resetScore(local){
+  scores={1:0,2:0}; draws=0; round=1; resetBoard();
+  if(local!==false && dc&&dc.readyState==='open')dc.send(JSON.stringify({type:'resetScore'}));
 }
 </script>
 </body>
